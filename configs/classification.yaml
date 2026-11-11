@@ -1,0 +1,52 @@
+trainer: cv_training.training.supervised.SupervisedTrainer
+device: cpu
+mixed_precision: false
+
+model:
+  class_path: cv_training.models.tiny_classifier.TinyClassifier
+  params:
+    num_classes: 3
+
+data:
+  source:
+    class_path: cv_training.data.local.LocalDataSource
+    params:
+      root: data/classification
+      images_dir: images
+      annotations_dir: annotations
+  annotation_reader:
+    class_path: cv_training.data.annotations.JsonLabelAnnotationReader
+  val_ratio: 0.2
+  seed: 7
+  num_workers: 0
+
+preparation:
+  image_size: [64, 64]
+  normalize:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  augmentation:
+    horizontal_flip: true
+    flip_probability: 0.5
+  transform_device: cpu
+
+training:
+  epochs: 5
+  batch_size: 4
+  resume: false
+  checkpoint_every: 1
+
+optimizer:
+  name: adamw
+  lr: 0.001
+  params:
+    weight_decay: 0.01
+
+loss:
+  name: cross_entropy
+
+persistence:
+  store:
+    class_path: cv_training.persistence.local.LocalArtifactStore
+    params:
+      root: artifacts/classification

@@ -1,0 +1,57 @@
+trainer: cv_training.training.detection.ObjectDetectionTrainer
+# cpu, cuda, or auto. auto uses CUDA when this process can see it.
+device: cpu
+mixed_precision: false
+
+model:
+  class_path: cv_training.models.tiny_detector.TinyDetector
+  params:
+    num_classes: 2
+    grid_size: 8
+
+data:
+  source:
+    class_path: cv_training.data.local.LocalDataSource
+    params:
+      root: data/detection
+      images_dir: images
+      annotations_dir: annotations
+  annotation_reader:
+    class_path: cv_training.data.annotations.JsonBoxAnnotationReader
+  val_ratio: 0.2
+  seed: 7
+  num_workers: 0
+
+preparation:
+  # [height, width]. Resize keeps detection boxes in this coordinate frame.
+  image_size: [128, 128]
+  normalize:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  augmentation:
+    horizontal_flip: true
+    flip_probability: 0.5
+  transform_device: cpu
+
+training:
+  epochs: 10
+  batch_size: 4
+  resume: false
+  checkpoint_every: 1
+
+optimizer:
+  name: adamw
+  lr: 0.0001
+  params:
+    weight_decay: 0.01
+
+loss:
+  name: grid_detection
+  params:
+    box_weight: 1.0
+
+persistence:
+  store:
+    class_path: cv_training.persistence.local.LocalArtifactStore
+    params:
+      root: artifacts/detection
