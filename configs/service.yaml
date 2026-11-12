@@ -1,0 +1,3 @@
+# Connection used when TRAIN_CONFIG is id:<uuid>.
+# Mount a replacement over this file when the URL contains a secret.
+database_url: postgresql://training:training@localhost:5432/training

@@ -8,19 +8,33 @@ import random
 import torch
 from torch.utils.data import DataLoader
 
-from config import SERVICE_VERSION, TrainConfig
+from config import SERVICE_VERSION, DataSourceSpec, PersistenceSpec, TrainConfig
+from data_loading.annotations import JsonBoxAnnotationReader, JsonLabelAnnotationReader
 from data_loading.dataset import SupervisedImageDataset
-from training.device import resolve_device
-from imports import instantiate, load_class
+from data_loading.huggingface import HuggingFaceDataSource
+from data_loading.local import LocalDataSource
+from data_loading.s3 import S3DataSource
+from data_loading.source import DataSource
+from exporting.local import LocalArtifactStore
+from exporting.s3 import S3ArtifactStore
 from exporting.writer import ArtifactWriter
-from processing.split import split_samples
+from model_loading import load_model
 from processing.preprocessing import build_transform_pipeline
-from training.seed import seed_everything
+from processing.split import split_samples
 from training.base import BaseTrainer
+from training.detection import ObjectDetectionTrainer
+from training.device import resolve_device
 from training.losses import build_loss
 from training.optim import build_optimizer
+from training.seed import seed_everything
+from training.supervised import SupervisedTrainer
 
 logger = logging.getLogger(__name__)
+
+_TRAINERS: dict[str, type[BaseTrainer]] = {
+    "classification": SupervisedTrainer,
+    "detection": ObjectDetectionTrainer,
+}
 
 
 def build_trainer(config: TrainConfig) -> BaseTrainer:
@@ -30,22 +44,14 @@ def build_trainer(config: TrainConfig) -> BaseTrainer:
     augmentation. This service does not evaluate it.
     """
     seed_everything(config.data.seed)
-    device = resolve_device(config.device)
+    device = resolve_device(config.runtime.device)
     logger.info("Resolved device: %s", device.type)
 
-    persistence = config.persistence
-    store = instantiate(persistence.store.class_path, persistence.store.params)
-    artifacts = ArtifactWriter(
-        store,
-        checkpoint_name=persistence.checkpoint_name,
-        weights_name=persistence.weights_name,
-        config_name=persistence.config_name,
-        metrics_name=persistence.metrics_name,
-        metadata_name=persistence.metadata_name,
-    )
+    store = build_store(config.persistence)
+    artifacts = ArtifactWriter(store)
 
-    source = instantiate(config.data.source.class_path, config.data.source.params)
-    reader = instantiate(config.data.annotation_reader.class_path, config.data.annotation_reader.params)
+    source = build_data_source(config.data.source)
+    reader = JsonLabelAnnotationReader() if config.data.annotation == "label" else JsonBoxAnnotationReader()
     samples = source.list_samples()
     if not samples:
         raise ValueError("The data source did not return any samples.")
@@ -71,10 +77,7 @@ def build_trainer(config: TrainConfig) -> BaseTrainer:
         len(val_dataset),
     )
 
-    trainer_cls = load_class(config.trainer)
-    if not isinstance(trainer_cls, type) or not issubclass(trainer_cls, BaseTrainer):
-        raise TypeError(f"{config.trainer} must be a subclass of BaseTrainer.")
-
+    trainer_cls = _TRAINERS[config.task]
     generator = torch.Generator()
     generator.manual_seed(config.data.seed)
     loader_kwargs: dict = {
@@ -92,12 +95,13 @@ def build_trainer(config: TrainConfig) -> BaseTrainer:
         loader_kwargs["worker_init_fn"] = _seed_worker
     train_loader = DataLoader(**loader_kwargs)
 
-    model = instantiate(config.model.class_path, config.model.params)
+    model = load_model(config)
     model.to(device)
     optimizer = build_optimizer(model, config.optimizer)
     loss_fn = build_loss(config.loss)
     run_metadata = {
         "service_version": SERVICE_VERSION,
+        "config_id": str(config.id),
         "train_sample_ids": [sample.sample_id for sample in train_samples],
         "val_sample_ids": [sample.sample_id for sample in val_samples],
         "train_samples": len(train_dataset),
@@ -113,6 +117,27 @@ def build_trainer(config: TrainConfig) -> BaseTrainer:
         device=device,
         run_metadata=run_metadata,
     )
+
+
+def build_data_source(spec: DataSourceSpec) -> DataSource:
+    if spec.kind == "local":
+        return LocalDataSource(spec.root, spec.images_dir, spec.annotations_dir)
+    if spec.kind == "huggingface":
+        return HuggingFaceDataSource(
+            repo_id=spec.repo_id,
+            revision=spec.revision,
+            split=spec.split,
+            image_column=spec.image_column,
+            label_column=spec.label_column,
+            max_samples=spec.max_samples,
+        )
+    return S3DataSource(spec.bucket, spec.prefix, spec.images_dir, spec.annotations_dir)
+
+
+def build_store(spec: PersistenceSpec) -> LocalArtifactStore | S3ArtifactStore:
+    if spec.kind == "local":
+        return LocalArtifactStore(spec.root)
+    return S3ArtifactStore(spec.bucket, spec.prefix)
 
 
 def _seed_worker(worker_id: int) -> None:

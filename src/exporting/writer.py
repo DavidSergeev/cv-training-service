@@ -19,11 +19,11 @@ class ArtifactWriter:
         self,
         store: ArtifactStore,
         *,
-        checkpoint_name: str,
-        weights_name: str,
-        config_name: str,
-        metrics_name: str,
-        metadata_name: str,
+        checkpoint_name: str = "checkpoint.pt",
+        weights_name: str = "weights.pt",
+        config_name: str = "config.yaml",
+        metrics_name: str = "metrics.jsonl",
+        metadata_name: str = "metadata.json",
     ) -> None:
         self.store = store
         self.checkpoint_name = checkpoint_name

@@ -20,12 +20,18 @@ class SupervisedTrainer(BaseTrainer):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         if self.loss_fn is None:
-            configured = None if self.config.loss is None else self.config.loss.name
             choices = ", ".join(sorted(GENERIC_LOSSES))
             raise ValueError(
-                "SupervisedTrainer requires a generic loss or a dotted loss class path. "
-                f"Configured loss: {configured!r}. Known generic losses: {choices}."
+                "SupervisedTrainer requires a generic loss. "
+                f"Configured loss: {self.config.loss.name!r}. Known generic losses: {choices}."
             )
+
+    def forward(self, inputs: Any) -> Any:
+        outputs = super().forward(inputs)
+        logits = getattr(outputs, "logits", None)
+        if torch.is_tensor(logits):
+            return logits
+        return outputs
 
     def compute_loss(self, outputs: Any, targets: Any) -> torch.Tensor:
         if self.loss_fn is None:

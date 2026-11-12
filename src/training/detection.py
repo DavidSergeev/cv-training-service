@@ -77,17 +77,11 @@ class ObjectDetectionTrainer(BaseTrainer):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        loss_cfg = self.config.loss
-        if loss_cfg is not None and loss_cfg.name != "grid_detection":
+        if self.config.loss.name != "grid_detection":
             raise ValueError("ObjectDetectionTrainer expects loss.name to be 'grid_detection'.")
-        params = {} if loss_cfg is None else dict(loss_cfg.params)
-        unknown = set(params) - {"box_weight"}
-        if unknown:
-            names = ", ".join(sorted(unknown))
-            raise ValueError(f"Unsupported detection loss params: {names}.")
         self.criterion = GridDetectionLoss(
             image_size=self.config.preparation.image_size,
-            box_weight=float(params.get("box_weight", 1.0)),
+            box_weight=float(self.config.loss.box_weight),
         ).to(self.device)
 
     def compute_loss(self, outputs: Any, targets: Any) -> torch.Tensor:

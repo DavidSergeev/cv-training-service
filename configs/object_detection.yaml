@@ -1,29 +1,38 @@
-trainer: training.detection.ObjectDetectionTrainer
-# cpu, cuda, or auto. auto uses CUDA when this process can see it.
-device: cpu
-mixed_precision: false
+schema_version: 1
+id: 22222222-2222-4222-8222-222222222222
+task: detection
+
+runtime:
+  device: cpu
+  mixed_precision: false
 
 model:
-  class_path: training.tiny_detector.TinyDetector
-  params:
-    num_classes: 2
-    grid_size: 8
+  format: torch_checkpoint
+  mode: from_scratch
+  trainable: all
+  source:
+    kind: local
+    path: models/detector.pt
+  torch:
+    weights: state_dict
+    architecture:
+      class_path: training.tiny_detector.TinyDetector
+      params:
+        num_classes: 2
+        grid_size: 8
 
 data:
   source:
-    class_path: data_loading.local.LocalDataSource
-    params:
-      root: data/detection
-      images_dir: images
-      annotations_dir: annotations
-  annotation_reader:
-    class_path: data_loading.annotations.JsonBoxAnnotationReader
+    kind: local
+    root: data/detection
+    images_dir: images
+    annotations_dir: annotations
+  annotation: boxes
   val_ratio: 0.2
   seed: 7
   num_workers: 0
 
 preparation:
-  # [height, width]. Resize keeps detection boxes in this coordinate frame.
   image_size: [128, 128]
   normalize:
     mean: [0.485, 0.456, 0.406]
@@ -31,7 +40,6 @@ preparation:
   augmentation:
     horizontal_flip: true
     flip_probability: 0.5
-  transform_device: cpu
 
 training:
   epochs: 10
@@ -42,16 +50,12 @@ training:
 optimizer:
   name: adamw
   lr: 0.0001
-  params:
-    weight_decay: 0.01
+  weight_decay: 0.01
 
 loss:
   name: grid_detection
-  params:
-    box_weight: 1.0
+  box_weight: 1.0
 
 persistence:
-  store:
-    class_path: exporting.local.LocalArtifactStore
-    params:
-      root: artifacts/detection
+  kind: local
+  root: artifacts/detection

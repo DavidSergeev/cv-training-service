@@ -20,4 +20,7 @@ def build_optimizer(model: torch.nn.Module, config: OptimizerConfig) -> torch.op
     if key not in OPTIMIZERS:
         choices = ", ".join(sorted(OPTIMIZERS))
         raise ValueError(f"Unknown optimizer {config.name!r}. Expected one of: {choices}.")
-    return OPTIMIZERS[key](model.parameters(), lr=config.lr, **config.params)
+    parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    if not parameters:
+        raise ValueError("The model has no trainable parameters.")
+    return OPTIMIZERS[key](parameters, lr=config.lr, weight_decay=config.weight_decay)

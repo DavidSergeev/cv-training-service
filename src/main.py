@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
-import argparse
 import logging
 
+from pydantic import ValidationError
+
 from builder import build_trainer
-from config import load_config
+from errors import ConfigError
+from job import read_train_config_ref, resolve_train_config
+from settings import load_service_settings
+
+logger = logging.getLogger(__name__)
 
 
-def main(argv: list[str] | None = None) -> None:
+def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    parser = argparse.ArgumentParser(description="Run a configured computer-vision training job.")
-    parser.add_argument("--config", required=True, help="Path to a YAML training config.")
-    args = parser.parse_args(argv)
-    config = load_config(args.config)
+    try:
+        settings = load_service_settings()
+        config = resolve_train_config(read_train_config_ref(), settings)
+    except (ConfigError, FileNotFoundError, ValidationError) as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
     trainer = build_trainer(config)
     trainer.train()
 

@@ -55,7 +55,7 @@ class BaseTrainer(ABC):
         self.config = config
         self.device = device
         self.run_metadata = run_metadata or {}
-        self.use_amp = config.mixed_precision
+        self.use_amp = config.runtime.mixed_precision
         if self.use_amp and self.device.type != "cuda":
             raise RuntimeError("Mixed precision is only supported when the resolved device is CUDA.")
         self.scaler = _grad_scaler(self.device) if self.use_amp else None

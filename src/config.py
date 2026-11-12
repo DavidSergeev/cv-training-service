@@ -1,364 +1,383 @@
-"""Training configuration loaded from YAML.
+"""Training document shared by YAML files and database records.
 
-The training loop, data sources, and storage backends read this object. They
-do not open the YAML file themselves.
+A job file and a ``train_configs.config`` JSON value are the same object.
+Pydantic rejects unknown fields and illegal combinations before training starts.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
+from uuid import UUID
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from errors import ConfigError
 
 SERVICE_VERSION = "0.1.0"
 
-
-def _mapping(value: Any, path: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise TypeError(f"{path} must be a mapping.")
-    return value
+_MODEL_CONFIG = ConfigDict(extra="forbid", protected_namespaces=())
 
 
-def _reject_unknown(data: dict[str, Any], allowed: set[str], path: str) -> None:
-    unknown = sorted(set(data) - allowed)
-    if unknown:
-        names = ", ".join(unknown)
-        raise ValueError(f"Unknown {path} keys: {names}.")
+class RuntimeSettings(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    device: Literal["cpu", "cuda", "auto"] = "cpu"
+    mixed_precision: bool = False
 
 
-def _as_bool(value: Any, path: str) -> bool:
-    if not isinstance(value, bool):
-        raise TypeError(f"{path} must be a boolean.")
-    return value
+class LocalModelSource(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    kind: Literal["local"]
+    path: str
+
+    @field_validator("path")
+    @classmethod
+    def path_is_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("model.source.path must be a non-empty path.")
+        return value
 
 
-def _as_int(value: Any, path: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{path} must be an integer.")
-    return value
+class S3ModelSource(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    kind: Literal["s3"]
+    bucket: str
+    key: str
+
+    @field_validator("bucket", "key")
+    @classmethod
+    def text_is_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("model source bucket and key must be non-empty.")
+        return value
 
 
-def _as_float(value: Any, path: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"{path} must be a number.")
-    return float(value)
+class HuggingFaceSource(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    kind: Literal["huggingface"]
+    repo_id: str
+    revision: str = "main"
+
+    @field_validator("repo_id", "revision")
+    @classmethod
+    def text_is_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Hugging Face repo_id and revision must be non-empty.")
+        return value
 
 
-def _as_str(value: Any, path: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise TypeError(f"{path} must be a non-empty string.")
-    return value
+class ArchitectureSpec(BaseModel):
+    """Library class used to build a module around a state dict."""
 
-
-@dataclass
-class ClassConfig:
-    """A class selected by dotted path, plus its constructor arguments."""
+    model_config = _MODEL_CONFIG
 
     class_path: str
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("class_path")
     @classmethod
-    def from_dict(cls, data: dict[str, Any], path: str) -> ClassConfig:
-        _reject_unknown(data, {"class_path", "params"}, path)
-        params = data.get("params", {})
-        if not isinstance(params, dict):
-            raise TypeError(f"{path}.params must be a mapping.")
-        return cls(class_path=_as_str(data.get("class_path"), f"{path}.class_path"), params=dict(params))
+    def class_path_is_present(cls, value: str) -> str:
+        if not value.strip() or "." not in value:
+            raise ValueError("torch.architecture.class_path must be a dotted class path.")
+        return value
 
 
-@dataclass
-class NormalizeConfig:
-    mean: list[float]
-    std: list[float]
+class TorchModuleWeights(BaseModel):
+    model_config = _MODEL_CONFIG
 
-    def __post_init__(self) -> None:
-        if len(self.mean) != 3 or len(self.std) != 3:
-            raise ValueError("preparation.normalize mean and std must each contain 3 values.")
-        if any(value == 0 for value in self.std):
-            raise ValueError("preparation.normalize std values must be non-zero.")
+    weights: Literal["module"]
 
+
+class TorchStateDictWeights(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    weights: Literal["state_dict"]
+    architecture: ArchitectureSpec
+
+
+TorchWeights = Annotated[TorchModuleWeights | TorchStateDictWeights, Field(discriminator="weights")]
+CheckpointSource = Annotated[LocalModelSource | S3ModelSource, Field(discriminator="kind")]
+
+
+class TorchCheckpointModel(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    format: Literal["torch_checkpoint"]
+    mode: Literal["finetune", "from_scratch"]
+    trainable: Literal["all", "head_only"]
+    source: CheckpointSource
+    torch: TorchWeights
+
+
+class HuggingFaceSpec(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    task: Literal["image-classification", "object-detection"]
+    num_labels: int | None = None
+    ignore_mismatched_sizes: bool = False
+
+    @field_validator("num_labels")
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> NormalizeConfig:
-        _reject_unknown(data, {"mean", "std"}, "preparation.normalize")
-        return cls(
-            mean=[_as_float(value, "preparation.normalize.mean") for value in data.get("mean", [])],
-            std=[_as_float(value, "preparation.normalize.std") for value in data.get("std", [])],
-        )
+    def labels_are_positive(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("huggingface.num_labels must be at least 1.")
+        return value
+
+    @model_validator(mode="after")
+    def classification_declares_labels(self) -> HuggingFaceSpec:
+        if self.task == "image-classification" and self.num_labels is None:
+            raise ValueError("huggingface.num_labels is required for image-classification.")
+        return self
 
 
-@dataclass
-class AugmentationConfig:
-    horizontal_flip: bool = False
-    flip_probability: float = 0.5
+class HuggingFaceModel(BaseModel):
+    model_config = _MODEL_CONFIG
 
-    def __post_init__(self) -> None:
-        if not 0.0 <= self.flip_probability <= 1.0:
-            raise ValueError("preparation.augmentation.flip_probability must be in the range [0, 1].")
+    format: Literal["huggingface"]
+    mode: Literal["finetune", "from_scratch"]
+    trainable: Literal["all", "head_only"]
+    source: HuggingFaceSource
+    huggingface: HuggingFaceSpec
 
+
+ModelSpec = Annotated[TorchCheckpointModel | HuggingFaceModel, Field(discriminator="format")]
+
+
+class LocalDataSourceSpec(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    kind: Literal["local"]
+    root: str
+    images_dir: str = "images"
+    annotations_dir: str = "annotations"
+
+    @field_validator("root", "images_dir", "annotations_dir")
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AugmentationConfig:
-        _reject_unknown(data, {"horizontal_flip", "flip_probability"}, "preparation.augmentation")
-        return cls(
-            horizontal_flip=_as_bool(
-                data.get("horizontal_flip", False),
-                "preparation.augmentation.horizontal_flip",
-            ),
-            flip_probability=_as_float(
-                data.get("flip_probability", 0.5),
-                "preparation.augmentation.flip_probability",
-            ),
-        )
+    def text_is_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("data source paths must be non-empty.")
+        return value
 
 
-@dataclass
-class PreparationConfig:
-    """Preprocessing and augmentation settings.
+class S3DataSourceSpec(BaseModel):
+    model_config = _MODEL_CONFIG
 
-    ``transform_device`` is accepted so a later GPU pipeline can be selected
-    from configuration. Only ``cpu`` is implemented.
+    kind: Literal["s3"]
+    bucket: str
+    prefix: str = ""
+    images_dir: str = "images"
+    annotations_dir: str = "annotations"
+
+    @field_validator("bucket", "images_dir", "annotations_dir")
+    @classmethod
+    def text_is_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("data source bucket and directory names must be non-empty.")
+        return value
+
+
+class HuggingFaceDataSourceSpec(BaseModel):
+    """A Hub dataset row with an image column and an integer label column.
+
+    ``max_samples`` stops the stream after that many rows. Leave it unset only
+    for a dataset that is already small enough to read in full.
     """
+
+    model_config = _MODEL_CONFIG
+
+    kind: Literal["huggingface"]
+    repo_id: str
+    revision: str = "main"
+    split: str = "train"
+    image_column: str = "image"
+    label_column: str = "label"
+    max_samples: int | None = Field(default=None, ge=1)
+
+    @field_validator("repo_id", "revision", "split", "image_column", "label_column")
+    @classmethod
+    def text_is_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Hugging Face data source values must be non-empty.")
+        return value
+
+
+DataSourceSpec = Annotated[
+    LocalDataSourceSpec | S3DataSourceSpec | HuggingFaceDataSourceSpec,
+    Field(discriminator="kind"),
+]
+
+
+class DataSpec(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    source: DataSourceSpec
+    annotation: Literal["label", "boxes"]
+    val_ratio: float = Field(default=0.2, ge=0.0, lt=1.0)
+    seed: int = 0
+    num_workers: int = Field(default=0, ge=0)
+
+
+class NormalizeConfig(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    mean: list[float] = Field(min_length=3, max_length=3)
+    std: list[float] = Field(min_length=3, max_length=3)
+
+    @field_validator("std")
+    @classmethod
+    def std_is_nonzero(cls, value: list[float]) -> list[float]:
+        if any(item == 0 for item in value):
+            raise ValueError("preparation.normalize std values must be non-zero.")
+        return value
+
+
+class AugmentationConfig(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    horizontal_flip: bool = False
+    flip_probability: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class PreparationConfig(BaseModel):
+    model_config = _MODEL_CONFIG
 
     image_size: tuple[int, int]
     normalize: NormalizeConfig | None = None
-    augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
-    transform_device: str = "cpu"
+    augmentation: AugmentationConfig = Field(default_factory=AugmentationConfig)
 
-    def __post_init__(self) -> None:
-        height, width = self.image_size
+    @field_validator("image_size", mode="before")
+    @classmethod
+    def image_size_pair(cls, value: Any) -> tuple[int, int]:
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError("preparation.image_size must be [height, width].")
+        height, width = value
+        if type(height) is not int or type(width) is not int:
+            raise ValueError("preparation.image_size values must be integers.")
         if height <= 0 or width <= 0:
             raise ValueError("preparation.image_size values must be positive.")
-        self.transform_device = self.transform_device.lower()
-        if self.transform_device not in {"cpu", "cuda"}:
-            raise ValueError("preparation.transform_device must be 'cpu' or 'cuda'.")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PreparationConfig:
-        _reject_unknown(
-            data,
-            {"image_size", "normalize", "augmentation", "transform_device"},
-            "preparation",
-        )
-        raw_size = data.get("image_size")
-        if not isinstance(raw_size, (list, tuple)) or len(raw_size) != 2:
-            raise TypeError("preparation.image_size must be [height, width].")
-        image_size = (
-            _as_int(raw_size[0], "preparation.image_size[0]"),
-            _as_int(raw_size[1], "preparation.image_size[1]"),
-        )
-        normalize = None
-        if "normalize" in data and data["normalize"] is not None:
-            normalize = NormalizeConfig.from_dict(_mapping(data["normalize"], "preparation.normalize"))
-        augmentation = AugmentationConfig()
-        if "augmentation" in data and data["augmentation"] is not None:
-            augmentation = AugmentationConfig.from_dict(
-                _mapping(data["augmentation"], "preparation.augmentation")
-            )
-        return cls(
-            image_size=image_size,
-            normalize=normalize,
-            augmentation=augmentation,
-            transform_device=_as_str(
-                data.get("transform_device", "cpu"),
-                "preparation.transform_device",
-            ),
-        )
+        return (height, width)
 
 
-@dataclass
-class DataConfig:
-    source: ClassConfig
-    annotation_reader: ClassConfig
-    val_ratio: float = 0.2
-    seed: int = 0
-    num_workers: int = 0
+class LoopConfig(BaseModel):
+    model_config = _MODEL_CONFIG
 
-    def __post_init__(self) -> None:
-        if not 0.0 <= self.val_ratio < 1.0:
-            raise ValueError("data.val_ratio must be in the range [0, 1).")
-        if self.num_workers < 0:
-            raise ValueError("data.num_workers must be zero or greater.")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DataConfig:
-        _reject_unknown(
-            data,
-            {"source", "annotation_reader", "val_ratio", "seed", "num_workers"},
-            "data",
-        )
-        return cls(
-            source=ClassConfig.from_dict(_mapping(data.get("source"), "data.source"), "data.source"),
-            annotation_reader=ClassConfig.from_dict(
-                _mapping(data.get("annotation_reader"), "data.annotation_reader"),
-                "data.annotation_reader",
-            ),
-            val_ratio=_as_float(data.get("val_ratio", 0.2), "data.val_ratio"),
-            seed=_as_int(data.get("seed", 0), "data.seed"),
-            num_workers=_as_int(data.get("num_workers", 0), "data.num_workers"),
-        )
-
-
-@dataclass
-class LoopConfig:
-    epochs: int
-    batch_size: int
+    epochs: int = Field(ge=1)
+    batch_size: int = Field(ge=1)
     resume: bool = False
-    checkpoint_every: int = 1
+    checkpoint_every: int = Field(default=1, ge=0)
 
-    def __post_init__(self) -> None:
-        if self.epochs < 1:
-            raise ValueError("training.epochs must be at least 1.")
-        if self.batch_size < 1:
-            raise ValueError("training.batch_size must be at least 1.")
-        if self.checkpoint_every < 0:
-            raise ValueError("training.checkpoint_every must be zero or greater.")
 
+class OptimizerConfig(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    name: Literal["adam", "adamw", "sgd"]
+    lr: float = Field(gt=0)
+    weight_decay: float = Field(default=0.0, ge=0)
+
+
+class CrossEntropyLossSpec(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    name: Literal["cross_entropy"]
+
+
+class GridDetectionLossSpec(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    name: Literal["grid_detection"]
+    box_weight: float = Field(default=1.0, ge=0)
+
+
+LossSpec = Annotated[CrossEntropyLossSpec | GridDetectionLossSpec, Field(discriminator="name")]
+
+
+class LocalPersistence(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    kind: Literal["local"]
+    root: str
+
+    @field_validator("root")
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> LoopConfig:
-        _reject_unknown(data, {"epochs", "batch_size", "resume", "checkpoint_every"}, "training")
-        return cls(
-            epochs=_as_int(data.get("epochs"), "training.epochs"),
-            batch_size=_as_int(data.get("batch_size"), "training.batch_size"),
-            resume=_as_bool(data.get("resume", False), "training.resume"),
-            checkpoint_every=_as_int(data.get("checkpoint_every", 1), "training.checkpoint_every"),
-        )
+    def root_is_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("persistence.root must be a non-empty path.")
+        return value
 
 
-@dataclass
-class OptimizerConfig:
-    name: str
-    lr: float
-    params: dict[str, Any] = field(default_factory=dict)
+class S3Persistence(BaseModel):
+    model_config = _MODEL_CONFIG
 
-    def __post_init__(self) -> None:
-        if self.lr <= 0:
-            raise ValueError("optimizer.lr must be positive.")
+    kind: Literal["s3"]
+    bucket: str
+    prefix: str = ""
 
+    @field_validator("bucket")
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> OptimizerConfig:
-        _reject_unknown(data, {"name", "lr", "params"}, "optimizer")
-        params = data.get("params", {})
-        if not isinstance(params, dict):
-            raise TypeError("optimizer.params must be a mapping.")
-        return cls(
-            name=_as_str(data.get("name"), "optimizer.name"),
-            lr=_as_float(data.get("lr"), "optimizer.lr"),
-            params=dict(params),
-        )
+    def bucket_is_present(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("persistence.bucket must be non-empty.")
+        return value
 
 
-@dataclass
-class LossConfig:
-    """Loss selection.
-
-    ``name`` is either a built-in loss (``cross_entropy``, ``mse``, ``l1``,
-    ``bce_with_logits``), a dotted class path, or a task-specific name that
-    the concrete trainer interprets (for example ``grid_detection``).
-    """
-
-    name: str
-    params: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> LossConfig:
-        _reject_unknown(data, {"name", "params"}, "loss")
-        params = data.get("params", {})
-        if not isinstance(params, dict):
-            raise TypeError("loss.params must be a mapping.")
-        return cls(name=_as_str(data.get("name"), "loss.name"), params=dict(params))
+PersistenceSpec = Annotated[LocalPersistence | S3Persistence, Field(discriminator="kind")]
 
 
-@dataclass
-class PersistenceConfig:
-    store: ClassConfig
-    checkpoint_name: str = "checkpoint.pt"
-    weights_name: str = "weights.pt"
-    config_name: str = "config.yaml"
-    metrics_name: str = "metrics.jsonl"
-    metadata_name: str = "metadata.json"
+class TrainConfig(BaseModel):
+    """One training job. The YAML file and the database record use this schema."""
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> PersistenceConfig:
-        _reject_unknown(
-            data,
-            {"store", "checkpoint_name", "weights_name", "config_name", "metrics_name", "metadata_name"},
-            "persistence",
-        )
-        return cls(
-            store=ClassConfig.from_dict(_mapping(data.get("store"), "persistence.store"), "persistence.store"),
-            checkpoint_name=_as_str(data.get("checkpoint_name", "checkpoint.pt"), "persistence.checkpoint_name"),
-            weights_name=_as_str(data.get("weights_name", "weights.pt"), "persistence.weights_name"),
-            config_name=_as_str(data.get("config_name", "config.yaml"), "persistence.config_name"),
-            metrics_name=_as_str(data.get("metrics_name", "metrics.jsonl"), "persistence.metrics_name"),
-            metadata_name=_as_str(data.get("metadata_name", "metadata.json"), "persistence.metadata_name"),
-        )
+    model_config = _MODEL_CONFIG
 
-
-@dataclass
-class TrainConfig:
-    trainer: str
-    model: ClassConfig
-    data: DataConfig
+    schema_version: Literal[1]
+    id: UUID
+    task: Literal["classification", "detection"]
+    runtime: RuntimeSettings
+    model: ModelSpec
+    data: DataSpec
     preparation: PreparationConfig
     training: LoopConfig
     optimizer: OptimizerConfig
-    persistence: PersistenceConfig
-    device: str = "cpu"
-    mixed_precision: bool = False
-    loss: LossConfig | None = None
+    loss: LossSpec
+    persistence: PersistenceSpec
 
-    def __post_init__(self) -> None:
-        self.device = self.device.lower()
-        if self.device not in {"cpu", "cuda", "auto"}:
-            raise ValueError("device must be 'cpu', 'cuda', or 'auto'.")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TrainConfig:
-        _reject_unknown(
-            data,
-            {
-                "trainer",
-                "model",
-                "data",
-                "preparation",
-                "training",
-                "optimizer",
-                "persistence",
-                "device",
-                "mixed_precision",
-                "loss",
-            },
-            "config",
-        )
-        loss = None
-        if "loss" in data and data["loss"] is not None:
-            loss = LossConfig.from_dict(_mapping(data["loss"], "loss"))
-        return cls(
-            trainer=_as_str(data.get("trainer"), "trainer"),
-            model=ClassConfig.from_dict(_mapping(data.get("model"), "model"), "model"),
-            data=DataConfig.from_dict(_mapping(data.get("data"), "data")),
-            preparation=PreparationConfig.from_dict(_mapping(data.get("preparation"), "preparation")),
-            training=LoopConfig.from_dict(_mapping(data.get("training"), "training")),
-            optimizer=OptimizerConfig.from_dict(_mapping(data.get("optimizer"), "optimizer")),
-            persistence=PersistenceConfig.from_dict(_mapping(data.get("persistence"), "persistence")),
-            device=_as_str(data.get("device", "cpu"), "device"),
-            mixed_precision=_as_bool(data.get("mixed_precision", False), "mixed_precision"),
-            loss=loss,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    @model_validator(mode="after")
+    def task_matches_data_loss_and_model(self) -> TrainConfig:
+        if self.task == "classification":
+            if self.data.annotation != "label":
+                raise ValueError("classification requires data.annotation 'label'.")
+            if self.loss.name != "cross_entropy":
+                raise ValueError("classification requires loss.name 'cross_entropy'.")
+            if self.model.format == "huggingface" and self.model.huggingface.task != "image-classification":
+                raise ValueError("classification requires huggingface.task 'image-classification'.")
+            return self
+        if self.data.annotation != "boxes":
+            raise ValueError("detection requires data.annotation 'boxes'.")
+        if self.loss.name != "grid_detection":
+            raise ValueError("detection requires loss.name 'grid_detection'.")
+        if self.model.format == "huggingface" and self.model.huggingface.task != "object-detection":
+            raise ValueError("detection requires huggingface.task 'object-detection'.")
+        return self
 
 
 def load_config(path: str | Path) -> TrainConfig:
-    """Load a training config from a YAML file."""
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    """Load a training document from a YAML file."""
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise FileNotFoundError(f"Training config file does not exist: {file_path}")
+    raw = yaml.safe_load(file_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
-        raise TypeError(f"Config file must contain a mapping: {path}")
-    return TrainConfig.from_dict(raw)
+        raise ConfigError(f"Training config file must contain a mapping: {file_path}")
+    try:
+        return TrainConfig.model_validate(raw)
+    except ValidationError:
+        raise
 
 
 def dump_config(config: TrainConfig) -> str:
-    """Serialize a config to YAML text for artifact storage."""
-    return yaml.safe_dump(config.to_dict(), sort_keys=False)
+    """Serialize a training document to YAML text for artifact storage."""
+    return yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False)

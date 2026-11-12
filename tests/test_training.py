@@ -25,35 +25,25 @@ from training.supervised import SupervisedTrainer
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _config(tmp_path: Path, *, epochs: int, resume: bool, trainer: str, loss_name: str) -> TrainConfig:
-    raw = load_config(ROOT / "configs" / "classification.yaml").to_dict()
-    raw["trainer"] = trainer
-    raw["device"] = "cpu"
-    raw["mixed_precision"] = False
+def _config(tmp_path: Path, *, epochs: int, resume: bool) -> TrainConfig:
+    raw = load_config(ROOT / "configs" / "classification.yaml").model_dump(mode="json")
+    raw["runtime"]["device"] = "cpu"
+    raw["runtime"]["mixed_precision"] = False
     raw["training"]["epochs"] = epochs
     raw["training"]["resume"] = resume
     raw["training"]["batch_size"] = 2
-    raw["loss"] = {"name": loss_name}
+    raw["loss"] = {"name": "cross_entropy"}
     raw["preparation"]["image_size"] = [32, 32]
-    raw["persistence"]["store"]["params"]["root"] = str(tmp_path / "artifacts")
-    return TrainConfig.from_dict(raw)
+    raw["persistence"] = {"kind": "local", "root": str(tmp_path / "artifacts")}
+    return TrainConfig.model_validate(raw)
 
 
 def _writer(config: TrainConfig) -> ArtifactWriter:
-    store = LocalArtifactStore(config.persistence.store.params["root"])
-    names = config.persistence
-    return ArtifactWriter(
-        store,
-        checkpoint_name=names.checkpoint_name,
-        weights_name=names.weights_name,
-        config_name=names.config_name,
-        metrics_name=names.metrics_name,
-        metadata_name=names.metadata_name,
-    )
+    return ArtifactWriter(LocalArtifactStore(config.persistence.root))
 
 
 def _supervised(config: TrainConfig) -> SupervisedTrainer:
-    device = resolve_device(config.device)
+    device = resolve_device(config.runtime.device)
     model = TinyClassifier(num_classes=3).to(device)
     data = TensorDataset(torch.rand(4, 3, 16, 16), torch.tensor([0, 1, 2, 1]))
     loader = DataLoader(data, batch_size=config.training.batch_size, shuffle=True)
@@ -69,18 +59,12 @@ def _supervised(config: TrainConfig) -> SupervisedTrainer:
 
 
 def test_supervised_loop_writes_metrics_checkpoint_and_weights(tmp_path: Path) -> None:
-    config = _config(
-        tmp_path,
-        epochs=2,
-        resume=False,
-        trainer="training.supervised.SupervisedTrainer",
-        loss_name="cross_entropy",
-    )
+    config = _config(tmp_path, epochs=2, resume=False)
     history = _supervised(config).train()
     assert [metric.epoch for metric in history] == [1, 2]
     assert all(metric.train_loss > 0 for metric in history)
 
-    store = LocalArtifactStore(config.persistence.store.params["root"])
+    store = LocalArtifactStore(config.persistence.root)
     metrics = store.load("metrics.jsonl").decode("utf-8").strip().splitlines()
     assert [json.loads(line)["epoch"] for line in metrics] == [1, 2]
     checkpoint = _writer(config).load_checkpoint(torch.device("cpu"))
@@ -91,37 +75,19 @@ def test_supervised_loop_writes_metrics_checkpoint_and_weights(tmp_path: Path) -
 
 
 def test_resume_continues_from_completed_epoch(tmp_path: Path) -> None:
-    first = _config(
-        tmp_path,
-        epochs=1,
-        resume=False,
-        trainer="training.supervised.SupervisedTrainer",
-        loss_name="cross_entropy",
-    )
+    first = _config(tmp_path, epochs=1, resume=False)
     _supervised(first).train()
-    second = _config(
-        tmp_path,
-        epochs=2,
-        resume=True,
-        trainer="training.supervised.SupervisedTrainer",
-        loss_name="cross_entropy",
-    )
+    second = _config(tmp_path, epochs=2, resume=True)
     history = _supervised(second).train()
     assert [metric.epoch for metric in history] == [2]
-    store = LocalArtifactStore(second.persistence.store.params["root"])
+    store = LocalArtifactStore(second.persistence.root)
     epochs = [json.loads(line)["epoch"] for line in store.load("metrics.jsonl").decode("utf-8").splitlines() if line]
     assert epochs == [1, 2]
 
 
 def test_mixed_precision_on_cpu_is_rejected(tmp_path: Path) -> None:
-    config = _config(
-        tmp_path,
-        epochs=1,
-        resume=False,
-        trainer="training.supervised.SupervisedTrainer",
-        loss_name="cross_entropy",
-    )
-    config.mixed_precision = True
+    config = _config(tmp_path, epochs=1, resume=False)
+    config.runtime.mixed_precision = True
     with pytest.raises(RuntimeError, match="Mixed precision"):
         _supervised(config)
 
@@ -145,12 +111,12 @@ class _Boxes(Dataset):
 
 
 def test_detection_trainer_runs_a_backward_step(tmp_path: Path) -> None:
-    raw = load_config(ROOT / "configs" / "object_detection.yaml").to_dict()
+    raw = load_config(ROOT / "configs" / "object_detection.yaml").model_dump(mode="json")
     raw["training"]["epochs"] = 1
     raw["training"]["batch_size"] = 2
     raw["preparation"]["image_size"] = [32, 32]
-    raw["persistence"]["store"]["params"]["root"] = str(tmp_path / "artifacts")
-    config = TrainConfig.from_dict(raw)
+    raw["persistence"] = {"kind": "local", "root": str(tmp_path / "artifacts")}
+    config = TrainConfig.model_validate(raw)
     device = resolve_device("cpu")
     model = TinyDetector(num_classes=2, grid_size=4).to(device)
     loader = DataLoader(_Boxes(), batch_size=2, collate_fn=ObjectDetectionTrainer.batch_collate)
@@ -168,7 +134,7 @@ def test_detection_trainer_runs_a_backward_step(tmp_path: Path) -> None:
     assert torch.isfinite(torch.tensor(history[0].train_loss))
 
 
-def test_main_trains_detection_from_local_files(tmp_path: Path) -> None:
+def test_main_trains_detection_from_local_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "data"
     images = root / "images"
     annotations = root / "annotations"
@@ -179,18 +145,19 @@ def test_main_trains_detection_from_local_files(tmp_path: Path) -> None:
         payload = {"boxes": [[2, 2, 12, 14]], "labels": [index % 2]}
         (annotations / f"sample-{index}.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    raw = load_config(ROOT / "configs" / "object_detection.yaml").to_dict()
-    raw["device"] = "cpu"
+    raw = load_config(ROOT / "configs" / "object_detection.yaml").model_dump(mode="json")
+    raw["runtime"]["device"] = "cpu"
     raw["training"]["epochs"] = 1
     raw["training"]["batch_size"] = 2
     raw["preparation"]["image_size"] = [32, 32]
     raw["data"]["val_ratio"] = 0.25
-    raw["data"]["source"]["params"]["root"] = str(root)
-    raw["persistence"]["store"]["params"]["root"] = str(tmp_path / "artifacts")
+    raw["data"]["source"]["root"] = str(root)
+    raw["persistence"] = {"kind": "local", "root": str(tmp_path / "artifacts")}
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
-    main(["--config", str(config_path)])
+    monkeypatch.setenv("TRAIN_CONFIG", f"path:{config_path}")
+    main()
 
     store = LocalArtifactStore(str(tmp_path / "artifacts"))
     metadata = json.loads(store.load("metadata.json"))
@@ -199,7 +166,14 @@ def test_main_trains_detection_from_local_files(tmp_path: Path) -> None:
     assert metadata["val_samples"] == 1
     assert store.exists("weights.pt")
     reloaded = yaml.safe_load(store.load("config.yaml").decode("utf-8"))
-    assert reloaded["trainer"].endswith("ObjectDetectionTrainer")
+    assert reloaded["task"] == "detection"
+
+
+def test_main_rejects_a_missing_train_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TRAIN_CONFIG", raising=False)
+    with pytest.raises(SystemExit) as raised:
+        main()
+    assert raised.value.code == 1
 
 
 def test_auto_device_selects_an_available_device() -> None:
@@ -211,11 +185,16 @@ def test_auto_device_selects_an_available_device() -> None:
 
 
 def test_build_trainer_rejects_an_empty_source(tmp_path: Path) -> None:
-    raw = load_config(ROOT / "configs" / "classification.yaml").to_dict()
-    raw["data"]["source"]["params"]["root"] = str(tmp_path / "empty")
+    raw = load_config(ROOT / "configs" / "classification.yaml").model_dump(mode="json")
+    raw["data"]["source"] = {
+        "kind": "local",
+        "root": str(tmp_path / "empty"),
+        "images_dir": "images",
+        "annotations_dir": "annotations",
+    }
     (tmp_path / "empty" / "images").mkdir(parents=True)
     (tmp_path / "empty" / "annotations").mkdir()
-    raw["persistence"]["store"]["params"]["root"] = str(tmp_path / "artifacts")
-    config = TrainConfig.from_dict(raw)
+    raw["persistence"] = {"kind": "local", "root": str(tmp_path / "artifacts")}
+    config = TrainConfig.model_validate(raw)
     with pytest.raises(ValueError, match="did not return any samples"):
         build_trainer(config)

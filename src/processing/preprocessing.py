@@ -84,11 +84,7 @@ class Normalize:
 
 
 def build_transform_pipeline(config: PreparationConfig, *, augment: bool) -> Compose:
-    """Build the preprocessing pipeline. Augmentation is applied to the train split."""
-    if config.transform_device != "cpu":
-        raise NotImplementedError(
-            "Only CPU transformations are implemented. Set preparation.transform_device to 'cpu'."
-        )
+    """Build the CPU preprocessing pipeline. Augmentation is applied to the train split."""
     steps: list[SampleTransform] = [Resize(config.image_size)]
     if augment and config.augmentation.horizontal_flip:
         steps.append(RandomHorizontalFlip(config.augmentation.flip_probability))

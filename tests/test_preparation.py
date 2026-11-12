@@ -2,10 +2,9 @@
 
 from pathlib import Path
 
-import pytest
 import torch
 
-from config import TrainConfig, load_config
+from config import load_config
 from data_loading.source import SampleRef
 from processing.split import split_samples
 from processing.preprocessing import (
@@ -67,9 +66,9 @@ def test_normalize_leaves_labels_unchanged() -> None:
     assert torch.equal(target, label)
 
 
-def test_gpu_transform_pipeline_is_rejected() -> None:
-    raw = load_config(ROOT / "configs" / "classification.yaml").to_dict()
-    raw["preparation"]["transform_device"] = "cuda"
-    config = TrainConfig.from_dict(raw)
-    with pytest.raises(NotImplementedError, match="CPU"):
-        build_transform_pipeline(config.preparation, augment=True)
+def test_transform_pipeline_resizes_and_can_skip_augmentation() -> None:
+    config = load_config(ROOT / "configs" / "classification.yaml")
+    train_pipeline = build_transform_pipeline(config.preparation, augment=True)
+    val_pipeline = build_transform_pipeline(config.preparation, augment=False)
+    assert len(train_pipeline.transforms) == 3
+    assert len(val_pipeline.transforms) == 2
