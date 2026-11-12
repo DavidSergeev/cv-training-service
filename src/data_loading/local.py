@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cv_training.data.source import IMAGE_SUFFIXES, DataSource, SampleRef
+from data_loading.source import IMAGE_SUFFIXES, DataSource, SampleRef
 
 
 class LocalDataSource(DataSource):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cv_training.persistence.store import ArtifactStore, validate_relative_key
+from exporting.store import ArtifactStore, validate_relative_key
 
 
 class LocalArtifactStore(ArtifactStore):

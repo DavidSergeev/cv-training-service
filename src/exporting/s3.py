@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from cv_training.persistence.store import ArtifactStore, validate_relative_key
-from cv_training.s3 import create_s3_client, is_not_found, join_key
+from exporting.store import ArtifactStore, validate_relative_key
+from s3 import create_s3_client, is_not_found, join_key
 
 
 class S3ArtifactStore(ArtifactStore):

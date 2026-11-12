@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import torch.nn as nn
 
-from cv_training.config import LossConfig
-from cv_training.imports import load_class
+from config import LossConfig
+from imports import load_class
 
 GENERIC_LOSSES: dict[str, type[nn.Module]] = {
     "bce_with_logits": nn.BCEWithLogitsLoss,

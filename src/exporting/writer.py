@@ -8,8 +8,8 @@ from typing import Any
 
 import torch
 
-from cv_training.config import TrainConfig, dump_config
-from cv_training.persistence.store import ArtifactStore
+from config import TrainConfig, dump_config
+from exporting.store import ArtifactStore
 
 
 class ArtifactWriter:

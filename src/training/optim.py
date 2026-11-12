@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from cv_training.config import OptimizerConfig
+from config import OptimizerConfig
 
 OPTIMIZERS: dict[str, type[torch.optim.Optimizer]] = {
     "adam": torch.optim.Adam,

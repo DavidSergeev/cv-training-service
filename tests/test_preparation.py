@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 import torch
 
-from cv_training.config import TrainConfig, load_config
-from cv_training.data.source import SampleRef
-from cv_training.preparation.split import split_samples
-from cv_training.preparation.transforms import (
+from config import TrainConfig, load_config
+from data_loading.source import SampleRef
+from processing.split import split_samples
+from processing.preprocessing import (
     Normalize,
     RandomHorizontalFlip,
     Resize,

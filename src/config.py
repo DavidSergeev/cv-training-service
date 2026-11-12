@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+SERVICE_VERSION = "0.1.0"
+
 
 def _mapping(value: Any, path: str) -> dict[str, Any]:
     if not isinstance(value, dict):

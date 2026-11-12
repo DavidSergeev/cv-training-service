@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 from typing import Sequence
 
-from cv_training.data.source import SampleRef
+from data_loading.source import SampleRef
 
 
 def split_samples(

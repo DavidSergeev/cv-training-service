@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from cv_training.config import TrainConfig, load_config
+from config import TrainConfig, load_config
 
 ROOT = Path(__file__).resolve().parents[1]
 

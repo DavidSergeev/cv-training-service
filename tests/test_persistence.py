@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from cv_training.persistence.local import LocalArtifactStore
-from cv_training.persistence.s3 import S3ArtifactStore
+from exporting.local import LocalArtifactStore
+from exporting.s3 import S3ArtifactStore
 
 
 class _Missing(Exception):

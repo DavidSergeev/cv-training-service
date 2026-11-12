@@ -13,7 +13,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from cv_training.training.base import BaseTrainer
+from training.base import BaseTrainer
 
 
 class GridDetectionLoss(torch.nn.Module):

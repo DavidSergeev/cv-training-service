@@ -9,18 +9,18 @@ import yaml
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 
-from cv_training.builder import build_trainer
-from cv_training.cli import main
-from cv_training.config import TrainConfig, load_config
-from cv_training.device import resolve_device
-from cv_training.models.tiny_classifier import TinyClassifier
-from cv_training.models.tiny_detector import TinyDetector
-from cv_training.persistence.local import LocalArtifactStore
-from cv_training.persistence.writer import ArtifactWriter
-from cv_training.training.detection import ObjectDetectionTrainer
-from cv_training.training.losses import build_loss
-from cv_training.training.optim import build_optimizer
-from cv_training.training.supervised import SupervisedTrainer
+from builder import build_trainer
+from cli import main
+from config import TrainConfig, load_config
+from training.device import resolve_device
+from training.tiny_classifier import TinyClassifier
+from training.tiny_detector import TinyDetector
+from exporting.local import LocalArtifactStore
+from exporting.writer import ArtifactWriter
+from training.detection import ObjectDetectionTrainer
+from training.losses import build_loss
+from training.optim import build_optimizer
+from training.supervised import SupervisedTrainer
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -73,7 +73,7 @@ def test_supervised_loop_writes_metrics_checkpoint_and_weights(tmp_path: Path) -
         tmp_path,
         epochs=2,
         resume=False,
-        trainer="cv_training.training.supervised.SupervisedTrainer",
+        trainer="training.supervised.SupervisedTrainer",
         loss_name="cross_entropy",
     )
     history = _supervised(config).train()
@@ -95,7 +95,7 @@ def test_resume_continues_from_completed_epoch(tmp_path: Path) -> None:
         tmp_path,
         epochs=1,
         resume=False,
-        trainer="cv_training.training.supervised.SupervisedTrainer",
+        trainer="training.supervised.SupervisedTrainer",
         loss_name="cross_entropy",
     )
     _supervised(first).train()
@@ -103,7 +103,7 @@ def test_resume_continues_from_completed_epoch(tmp_path: Path) -> None:
         tmp_path,
         epochs=2,
         resume=True,
-        trainer="cv_training.training.supervised.SupervisedTrainer",
+        trainer="training.supervised.SupervisedTrainer",
         loss_name="cross_entropy",
     )
     history = _supervised(second).train()
@@ -118,7 +118,7 @@ def test_mixed_precision_on_cpu_is_rejected(tmp_path: Path) -> None:
         tmp_path,
         epochs=1,
         resume=False,
-        trainer="cv_training.training.supervised.SupervisedTrainer",
+        trainer="training.supervised.SupervisedTrainer",
         loss_name="cross_entropy",
     )
     config.mixed_precision = True

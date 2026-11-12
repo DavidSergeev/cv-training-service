@@ -6,8 +6,8 @@ from typing import Any
 
 import torch
 
-from cv_training.training.base import BaseTrainer
-from cv_training.training.losses import GENERIC_LOSSES
+from training.base import BaseTrainer
+from training.losses import GENERIC_LOSSES
 
 
 class SupervisedTrainer(BaseTrainer):

@@ -8,18 +8,17 @@ import random
 import torch
 from torch.utils.data import DataLoader
 
-from cv_training import __version__
-from cv_training.config import TrainConfig
-from cv_training.data.dataset import SupervisedImageDataset
-from cv_training.device import resolve_device
-from cv_training.imports import instantiate, load_class
-from cv_training.persistence.writer import ArtifactWriter
-from cv_training.preparation.split import split_samples
-from cv_training.preparation.transforms import build_transform_pipeline
-from cv_training.seed import seed_everything
-from cv_training.training.base import BaseTrainer
-from cv_training.training.losses import build_loss
-from cv_training.training.optim import build_optimizer
+from config import SERVICE_VERSION, TrainConfig
+from data_loading.dataset import SupervisedImageDataset
+from training.device import resolve_device
+from imports import instantiate, load_class
+from exporting.writer import ArtifactWriter
+from processing.split import split_samples
+from processing.preprocessing import build_transform_pipeline
+from training.seed import seed_everything
+from training.base import BaseTrainer
+from training.losses import build_loss
+from training.optim import build_optimizer
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +97,7 @@ def build_trainer(config: TrainConfig) -> BaseTrainer:
     optimizer = build_optimizer(model, config.optimizer)
     loss_fn = build_loss(config.loss)
     run_metadata = {
-        "service_version": __version__,
+        "service_version": SERVICE_VERSION,
         "train_sample_ids": [sample.sample_id for sample in train_samples],
         "val_sample_ids": [sample.sample_id for sample in val_samples],
         "train_samples": len(train_dataset),

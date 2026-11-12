@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import logging
 
-from cv_training.builder import build_trainer
-from cv_training.config import load_config
+from builder import build_trainer
+from config import load_config
 
 
 def main(argv: list[str] | None = None) -> None:

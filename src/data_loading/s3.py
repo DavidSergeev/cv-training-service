@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from cv_training.data.source import DataSource, SampleRef, has_image_suffix
-from cv_training.s3 import create_s3_client, is_not_found, join_key
+from data_loading.source import DataSource, SampleRef, has_image_suffix
+from s3 import create_s3_client, is_not_found, join_key
 
 
 class S3DataSource(DataSource):

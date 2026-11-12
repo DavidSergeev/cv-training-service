@@ -8,11 +8,11 @@ import pytest
 import torch
 from PIL import Image
 
-from cv_training.data.annotations import JsonBoxAnnotationReader, JsonLabelAnnotationReader
-from cv_training.data.dataset import SupervisedImageDataset
-from cv_training.data.local import LocalDataSource
-from cv_training.data.s3 import S3DataSource
-from cv_training.preparation.transforms import Resize
+from data_loading.annotations import JsonBoxAnnotationReader, JsonLabelAnnotationReader
+from data_loading.dataset import SupervisedImageDataset
+from data_loading.local import LocalDataSource
+from data_loading.s3 import S3DataSource
+from processing.preprocessing import Resize
 
 
 def _png(color: tuple[int, int, int], size: int = 8) -> bytes:

@@ -1,21 +1,21 @@
-trainer: cv_training.training.supervised.SupervisedTrainer
+trainer: training.supervised.SupervisedTrainer
 device: cpu
 mixed_precision: false
 
 model:
-  class_path: cv_training.models.tiny_classifier.TinyClassifier
+  class_path: training.tiny_classifier.TinyClassifier
   params:
     num_classes: 3
 
 data:
   source:
-    class_path: cv_training.data.local.LocalDataSource
+    class_path: data_loading.local.LocalDataSource
     params:
       root: data/classification
       images_dir: images
       annotations_dir: annotations
   annotation_reader:
-    class_path: cv_training.data.annotations.JsonLabelAnnotationReader
+    class_path: data_loading.annotations.JsonLabelAnnotationReader
   val_ratio: 0.2
   seed: 7
   num_workers: 0
@@ -47,6 +47,6 @@ loss:
 
 persistence:
   store:
-    class_path: cv_training.persistence.local.LocalArtifactStore
+    class_path: exporting.local.LocalArtifactStore
     params:
       root: artifacts/classification

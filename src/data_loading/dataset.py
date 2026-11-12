@@ -10,9 +10,9 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
-from cv_training.data.annotations import AnnotationReader
-from cv_training.data.source import DataSource, SampleRef
-from cv_training.preparation.transforms import SampleTransform
+from data_loading.annotations import AnnotationReader
+from data_loading.source import DataSource, SampleRef
+from processing.preprocessing import SampleTransform
 
 
 def decode_image(payload: bytes) -> torch.Tensor:

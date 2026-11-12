@@ -12,7 +12,7 @@ from typing import Any, Protocol
 import torch
 import torch.nn.functional as F
 
-from cv_training.config import PreparationConfig
+from config import PreparationConfig
 
 
 class SampleTransform(Protocol):

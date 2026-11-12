@@ -9,29 +9,24 @@ Evaluation and inference are intentionally not part of this service.
 ## Layout
 
 ```text
-src/cv_training/
-  builder.py              wires a config into a trainer
-  training/base.py        BaseTrainer lifecycle
-  training/supervised.py  generic injected-loss trainer
-  training/detection.py   reference object-detection trainer
-  data/                   source interface, local and S3 loaders, annotations
-  preparation/            resize, normalize, flip, train/validation split
-  persistence/            artifact-store interface, local and S3 stores
-  models/                 small reference models
-configs/                  example training configs
+src/data_loading/     sources, annotation readers, PyTorch dataset
+src/processing/       preprocessing, augmentation, train/validation split
+src/training/         BaseTrainer, concrete trainers, reference models
+src/exporting/        local and S3 artifact stores
+src/cli.py            entry point
+configs/              example training configs
+requirements.txt      runtime dependencies
+Dockerfile            PyTorch 2.15 CUDA 13.2 runtime
 ```
 
 ## Install
 
 ```bash
-pip install -e ".[dev]"
+pip install -r requirements.txt
+pip install pytest
 ```
 
-S3 backends need the optional extra:
-
-```bash
-pip install -e ".[s3]"
-```
+Run commands from the repository root with `src` on `PYTHONPATH`. The Docker image sets that for you.
 
 ## Run
 
@@ -51,8 +46,16 @@ Detection expects the same layout with boxes:
 Boxes are `x1, y1, x2, y2` in the original image's pixel coordinates. Labels are zero-based foreground classes.
 
 ```bash
-python -m cv_training --config configs/classification.yaml
-python -m cv_training --config configs/object_detection.yaml
+set PYTHONPATH=src
+python -m cli --config configs/classification.yaml
+python -m cli --config configs/object_detection.yaml
+```
+
+The image is the official PyTorch 2.15 runtime with CUDA 13.2. It trains on CPU, and on a GPU when the container is started with the NVIDIA runtime. `pip install -r requirements.txt` keeps the image's CUDA build of PyTorch when that build already satisfies `torch>=2.2`.
+
+```bash
+docker build -t cv-training-service .
+docker run --rm -v ${PWD}:/workspace cv-training-service --config /workspace/configs/classification.yaml
 ```
 
 Artifacts written for a run:
@@ -63,7 +66,7 @@ Artifacts written for a run:
 - `checkpoint.pt` — model, optimizer, and last metrics, used when `training.resume` is true
 - `weights.pt` — model weights on CPU
 
-To store artifacts in S3, point `persistence.store` at `cv_training.persistence.s3.S3ArtifactStore` with `bucket` and `prefix`. To read training data from S3, point `data.source` at `cv_training.data.s3.S3DataSource`. The object layout matches the local `images/` and `annotations/` directories.
+To store artifacts in S3, point `persistence.store` at `exporting.s3.S3ArtifactStore` with `bucket` and `prefix`. To read training data from S3, point `data.source` at `data_loading.s3.S3DataSource`. The object layout matches the local `images/` and `annotations/` directories.
 
 ## Add a trainer
 
@@ -71,4 +74,4 @@ Subclass `BaseTrainer`, implement `compute_loss`, and set `trainer` in the confi
 
 `TinyDetector` and `GridDetectionLoss` are reference implementations: each box is assigned to the grid cell that contains its center. Replace the model class path with a different `nn.Module` that returns `{"logits": (B, H, W, C), "boxes": (B, H, W, 4)}` if you want another head behind the same trainer.
 
-GPU transforms are not implemented. `preparation.transform_device` must stay `cpu` until a pipeline with the same `(image, target)` signature is added.
+GPU transforms are not implemented. `preparation.transform_device` must stay `cpu` until a pipeline with the same `(image, target)` signature is added in `processing`.

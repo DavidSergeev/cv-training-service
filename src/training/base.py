@@ -15,10 +15,10 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader
 
-from cv_training.config import TrainConfig
-from cv_training.device import move_to_device
-from cv_training.persistence.writer import ArtifactWriter
-from cv_training.training.metrics import EpochMetrics
+from config import TrainConfig
+from training.device import move_to_device
+from exporting.writer import ArtifactWriter
+from training.metrics import EpochMetrics
 
 logger = logging.getLogger(__name__)
 
