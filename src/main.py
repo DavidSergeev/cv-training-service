@@ -1,4 +1,4 @@
-"""Command-line entry point."""
+"""Service entry point."""
 
 from __future__ import annotations
 

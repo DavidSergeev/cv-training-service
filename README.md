@@ -13,7 +13,7 @@ src/data_loading/     sources, annotation readers, PyTorch dataset
 src/processing/       preprocessing, augmentation, train/validation split
 src/training/         BaseTrainer, concrete trainers, reference models
 src/exporting/        local and S3 artifact stores
-src/cli.py            entry point
+src/main.py           entry point
 configs/              example training configs
 requirements.txt      runtime dependencies
 Dockerfile            PyTorch 2.15 CUDA 13.2 runtime
@@ -47,11 +47,11 @@ Boxes are `x1, y1, x2, y2` in the original image's pixel coordinates. Labels are
 
 ```bash
 set PYTHONPATH=src
-python -m cli --config configs/classification.yaml
-python -m cli --config configs/object_detection.yaml
+python -m main --config configs/classification.yaml
+python -m main --config configs/object_detection.yaml
 ```
 
-The image is the official PyTorch 2.15 runtime with CUDA 13.2. It trains on CPU, and on a GPU when the container is started with the NVIDIA runtime. `pip install -r requirements.txt` keeps the image's CUDA build of PyTorch when that build already satisfies `torch>=2.2`.
+The image is the official PyTorch 2.15 runtime with CUDA 13.2. It trains on CPU, and on a GPU when the container is started with the NVIDIA runtime. Dependencies install into a virtual environment that reuses the image's CUDA PyTorch, NumPy, Pillow, and PyYAML, so pip only adds packages the image does not already provide.
 
 ```bash
 docker build -t cv-training-service .

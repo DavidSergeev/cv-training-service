@@ -10,7 +10,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 from builder import build_trainer
-from cli import main
+from main import main
 from config import TrainConfig, load_config
 from training.device import resolve_device
 from training.tiny_classifier import TinyClassifier
@@ -168,7 +168,7 @@ def test_detection_trainer_runs_a_backward_step(tmp_path: Path) -> None:
     assert torch.isfinite(torch.tensor(history[0].train_loss))
 
 
-def test_cli_trains_detection_from_local_files(tmp_path: Path) -> None:
+def test_main_trains_detection_from_local_files(tmp_path: Path) -> None:
     root = tmp_path / "data"
     images = root / "images"
     annotations = root / "annotations"
